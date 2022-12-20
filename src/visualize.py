@@ -10,6 +10,7 @@ import time
 import vispy
 from vispy.scene import visuals, SceneCanvas
 from vispy import app,scene
+import utm
 
 class Dataset():
     def __init__(self,ds_path,seq_num=None) -> None:
@@ -33,7 +34,7 @@ class Dataset():
         self.img_d_view = vispy.scene.widgets.ViewBox(
             border_color='white', parent=self.canvas.scene)
         self.img_d_view.camera = scene.PanZoomCamera(aspect=1)
-        self.grid.add_widget(self.scan_view, 0,0,col_span=2)
+        self.grid.add_widget(self.scan_view, 0,0,col_span=3)
         self.grid.add_widget(self.img_l_view,1,0)
         self.grid.add_widget(self.img_d_view,1,1)
 
@@ -61,6 +62,14 @@ class Dataset():
         for key, value in sem_color_dict.items():
             self.sem_color_lut[key] = np.array(value, np.float32) / 255.0
 
+        self.gps_w = vispy.scene.widgets.ViewBox(
+            border_color='white', parent=self.canvas.scene)
+        self.gps_w.camera = scene.PanZoomCamera(aspect=1)
+        self.grid.add_widget(self.gps_w,1,2)
+        self.gps_plot = visuals.Markers()
+        self.gps_w.add(self.gps_plot)
+
+        self.gps_logs = None
 
 
 
@@ -188,7 +197,7 @@ class Dataset():
         return img 
 
     def vispy_update(self,event):
-        st = 0.2
+        print("\nSequence:{}".format(self.file_num))
         # viridis_map = self.get_mpl_colormap("viridis")
         # viridis_colors = viridis_map[viridis_range]
 
@@ -218,54 +227,41 @@ class Dataset():
         else:
             img_d= None
 
-        # gps = gps_log[frame]
+        gps = gps_log[self.file_num]
         # # print(gps)
-        # gps = gps.split()
-        # # print(gps)
-        # # Plot point cloud
-        # print(pc[0])
-        # ax = plt.subplot(grid[:2,:],projection="3d")
-        # ax.scatter(pc[:,0],pc[:,1],pc[:,2])
-        # r = np.linalg.norm(pc,axis=1)
-        # pc = pc[r>0.1]
-        # ax = plt.subplot(grid[:2,:])
-        # ax.scatter(pc[:,0],pc[:,1],s=0.5)
+        gps = gps.split()
+        lat,lon = float(gps[1]),float(gps[2])
+        # lat,lon,_,_ = utm.from_latlon(lat,lon)
+        if self.gps_logs==None:
+            self.gps_logs = [[lat,lon,0.0]]
+        else:
+            self.gps_logs.append([lat,lon,0.0])
+        print(np.array(self.gps_logs))
         self.scan_vis.set_data(pc,face_color=self.sem_label_color[...,::-1],edge_color=self.sem_label_color[...,::-1],size=1)
-        # self.scan_vis.update()
-        # self.canvas.render()
 
-        # # Plot images
-        # ax = plt.subplot(grid[2,0])
-        # ax.imshow(cv2.cvtColor(img_left, cv2.COLOR_BGR2RGB))
-        # ax = plt.subplot(grid[2,1])
-        # ax.imshow(cv2.cvtColor(img_d, cv2.COLOR_BGR2RGB))
-        # img_left = cv2.resize(img_left, (960,540), interpolation = cv2.INTER_AREA)
         img_left = cv2.flip(img_left,0)
         img_d = cv2.flip(img_d,0)
-        # img_d = cv2.resize(img_d, (960,540), interpolation = cv2.INTER_AREA)
-        # img_d = cv2.cvtColor(img_d, cv2.COLOR_BGR2GRAY)
         self.img_l_v.set_data(cv2.cvtColor(img_left, cv2.COLOR_BGR2RGB))
         self.img_d_v.set_data(img_d)
 
         # # Plot gps coordinates
-        # # print(gps)
-        # lat,lon = float(gps[1]),float(gps[2])
-        # ax = plt.subplot(grid[2,2])
-        # ax.scatter(lat,lon,c="blue")
-        # plt.pause(0.1)
-
+        gps_data = np.array(self.gps_logs)
+        self.gps_plot.set_data(gps_data,face_color=(1,0,0),edge_color=(1,0,0),size=2)
+        self.gps_w.camera.set_range((np.min(gps_data[:,0])-0.00001,np.max(gps_data[:,0])+0.00001),(np.min(gps_data[:,1])-0.00001,np.max(gps_data[:,1])+0.00001),(1,-1))
         #Update
 
         if self.file_num==0:
             self.img_l_view.camera.set_range()
             self.img_d_view.camera.set_range()
             self.scan_view.camera.set_range()
+            
         self.file_num +=1
         if self.file_num>= len(self.files):
             self.seq +=1
             if self.seq >= len(self.sequences):
                 self.seq = 0
             self.file_num = 0
+            self.gps_logs = None
         
 
     def run(self):
