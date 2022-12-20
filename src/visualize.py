@@ -3,15 +3,52 @@ import os
 import numpy as np
 import open3d as o3d
 import matplotlib.pyplot as plt
-
-dataset_path = ""
-sequences = os.listdir(dataset_path)
-
+from mpl_toolkits.mplot3d import proj3d
+import cv2
+import time
+import vispy
+from vispy.scene import visuals, SceneCanvas
+from vispy import app,scene
 
 class Dataset():
-    def __init__(self) -> None:
-        self. dataset_path = ""
-        sequences = os.listdir(dataset_path)
+    def __init__(self,ds_path,seq_num=None) -> None:
+        self. dataset_path = ds_path
+        if seq_num ==None:
+            self.sequences = os.listdir(ds_path)
+        else:
+            self.sequences = [seq_num]
+        self.canvas = SceneCanvas(keys='interactive', show=True,size=(1920,1080))
+        self.timer = app.Timer()
+
+        # grid
+        self.grid = self.canvas.central_widget.add_grid()
+
+        # laserscan part
+        self.scan_view = vispy.scene.widgets.ViewBox(
+            border_color='white', parent=self.canvas.scene)
+        self.img_l_view = vispy.scene.widgets.ViewBox(
+            border_color='white', parent=self.canvas.scene)
+        self.img_l_view.camera = scene.PanZoomCamera(aspect=1)
+        self.img_d_view = vispy.scene.widgets.ViewBox(
+            border_color='white', parent=self.canvas.scene)
+        self.img_d_view.camera = scene.PanZoomCamera(aspect=1)
+        self.grid.add_widget(self.scan_view, 0,0,col_span=2)
+        self.grid.add_widget(self.img_l_view,1,0)
+        self.grid.add_widget(self.img_d_view,1,1)
+
+        self.img_l_v = visuals.Image()
+        self.img_d_v = visuals.Image(cmap='viridis')
+        self.img_l_view.add(self.img_l_v)
+        self.img_d_view.add(self.img_d_v)
+        self.scan_vis = visuals.Markers()
+        self.scan_view.camera = 'turntable'
+        self.scan_view.add(self.scan_vis)
+        visuals.XYZAxis(parent=self.scan_view.scene)
+        self.seq = 0
+        self.file_num = 0
+        self.files = os.listdir(os.path.join(self.dataset_path,self.sequences[self.seq],'velodyne'))
+        self.files = [s.strip(".bin") for s in self.files]
+
 
 
     def open_pointcloud(self,full_file_path):
@@ -24,20 +61,194 @@ class Dataset():
             points = pcd[:, 0:3]    # get xyz
             remissions = pcd[:, 3]  # get remission
             
-            return points,remissions
+            return np.array(points),remissions
         else:
             print("Error file doesn not exist:{}".format(full_file_path))
     
-    def draw_bbox(img,label_file_name):
-        if os.isfile(label_file_name):
-            file = open(label_file_name,'r')
-            labels = file.readlines()
-            for label in labels:
-                l = label.split(" ")
+    def draw_bbox(img,labels):
+        # if os.path.isfile(label_file_name):
+            # file = open(label_file_name,'r')
+            # labels = file.readlines()
+        if len(labels)==0:
+            return img
+        for label in labels:
+            l = label.split(" ")
+            xmin,ymin,xmax,ymax = int(l[4]),int(l[5]),int(l[6]),int(l[7])
+            cv2.rectangle(img,(xmin,ymin),(xmax,ymax),(0,0,255),2)
+
+
 
         return img
 
+    def play_sequence(self):
+        st = 0.2
+        fig = plt.figure(figsize=(16,24))
+        grid = plt.GridSpec(3,3,wspace =0.1, hspace = 0.1)
+
+        for seq in self.sequences:
+
+            files = os.listdir(os.path.join(self.dataset_path,seq,'velodyne'))
+            base_path = os.path.join(self.dataset_path,seq)
+            files = [s.strip(".bin") for s in files]
+            gps_file = open(os.path.join(self.dataset_path,seq,'gps',"gps.txt"),'r')
+            gps_log = gps_file.readlines() 
+
+            for frame in range(0,len(files)):
+                time.sleep(st)
+                pc,r = self.open_pointcloud(os.path.join(base_path,"velodyne",files[frame]+".bin"))
+                # label
+                img_path = os.path.join(base_path,"stereo_l",files[frame]+".jpg")
+                if os.path.isfile(img_path):
+                    img_left = cv2.imread(img_path)
+                else:
+                    img_left= None
+                img_d_path = os.path.join(base_path,"stereo_d",files[frame]+".jpg")
+                if os.path.isfile(img_d_path):
+                    img_d = cv2.imread(img_d_path)
+                else:
+                    img_d= None
+
+                gps = gps_log[frame]
+                # print(gps)
+                gps = gps.split()
+                # print(gps)
+                # Plot point cloud
+                print(pc[0])
+                ax = plt.subplot(grid[:2,:],projection="3d")
+                ax.scatter(pc[:,0],pc[:,1],pc[:,2])
+                r = np.linalg.norm(pc,axis=1)
+                pc = pc[r>0.1]
+                ax = plt.subplot(grid[:2,:])
+                ax.scatter(pc[:,0],pc[:,1],s=0.5)
+
+                # Plot images
+                img_left = cv2.resize(img_left, (960,540), interpolation = cv2.INTER_AREA)
+                img_left = cv2.flip(img_left,0)
+                img_d = cv2.resize(img_d, (960,540), interpolation = cv2.INTER_AREA)
+                ax = plt.subplot(grid[2,0])
+                ax.imshow(cv2.cvtColor(img_left, cv2.COLOR_BGR2RGB))
+                ax = plt.subplot(grid[2,1])
+                ax.imshow(cv2.cvtColor(img_d, cv2.COLOR_BGR2RGB))
+
+                # Plot gps coordinates
+                # print(gps)
+                lat,lon = float(gps[1]),float(gps[2])
+                ax = plt.subplot(grid[2,2])
+                ax.scatter(lat,lon,c="blue")
+                plt.pause(0.1)
+
+    def get_mpl_colormap(self, cmap_name):
+        cmap = plt.get_cmap(cmap_name)
+
+        # Initialize the matplotlib color map
+        sm = plt.cm.ScalarMappable(cmap=cmap)
+
+        # Obtain linear color range
+        color_range = sm.to_rgba(np.linspace(0, 1, 256), bytes=True)[:, 2::-1]
+
+        return color_range.reshape(256, 3).astype(np.float32) / 255.0  
+
+    def increase_brightness(self,img, value=30):
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        h, s, v = cv2.split(hsv)
+
+        lim = 255 - value
+        v[v > lim] = 255
+        v[v <= lim] += value
+
+        final_hsv = cv2.merge((h, s, v))
+        img = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
+        return img 
+
+    def vispy_update(self,event):
+        st = 0.2
+        # viridis_map = self.get_mpl_colormap("viridis")
+        # viridis_colors = viridis_map[viridis_range]
+
+        
+        base_path = os.path.join(self.dataset_path,self.sequences[self.seq])
+        
+        gps_file = open(os.path.join(self.dataset_path,self.sequences[self.seq],'gps',"gps.txt"),'r')
+        gps_log = gps_file.readlines() 
+
+        pc,r = self.open_pointcloud(os.path.join(base_path,"velodyne",self.files[self.file_num]+".bin"))
+        # label
+        img_path = os.path.join(base_path,"stereo_l",self.files[self.file_num]+".jpg")
+        if os.path.isfile(img_path):
+            img_left = cv2.imread(img_path)
+        else:
+            img_left= None
+        img_d_path = os.path.join(base_path,"stereo_d",self.files[self.file_num]+".jpg")
+        if os.path.isfile(img_d_path):
+            img_d = cv2.imread(img_d_path)
+            # img_d = img_d*1.8
+            # img_d = np.where(img_d<0.5,img_d*2.0,img_d)
+            # img_d = img_d.astype('uint8')
+            img_d = self.increase_brightness(img_d,50)
+        else:
+            img_d= None
+
+        # gps = gps_log[frame]
+        # # print(gps)
+        # gps = gps.split()
+        # # print(gps)
+        # # Plot point cloud
+        # print(pc[0])
+        # ax = plt.subplot(grid[:2,:],projection="3d")
+        # ax.scatter(pc[:,0],pc[:,1],pc[:,2])
+        # r = np.linalg.norm(pc,axis=1)
+        # pc = pc[r>0.1]
+        # ax = plt.subplot(grid[:2,:])
+        # ax.scatter(pc[:,0],pc[:,1],s=0.5)
+        self.scan_vis.set_data(pc,face_color=( 1,0,0),edge_color=(1,0,0),size=1)
+        # self.scan_vis.update()
+        # self.canvas.render()
+
+        # # Plot images
+        # ax = plt.subplot(grid[2,0])
+        # ax.imshow(cv2.cvtColor(img_left, cv2.COLOR_BGR2RGB))
+        # ax = plt.subplot(grid[2,1])
+        # ax.imshow(cv2.cvtColor(img_d, cv2.COLOR_BGR2RGB))
+        # img_left = cv2.resize(img_left, (960,540), interpolation = cv2.INTER_AREA)
+        img_left = cv2.flip(img_left,0)
+        # img_d = cv2.resize(img_d, (960,540), interpolation = cv2.INTER_AREA)
+        # img_d = cv2.cvtColor(img_d, cv2.COLOR_BGR2GRAY)
+        self.img_l_v.set_data(cv2.cvtColor(img_left, cv2.COLOR_BGR2RGB))
+        self.img_d_v.set_data(img_d)
+
+        # # Plot gps coordinates
+        # # print(gps)
+        # lat,lon = float(gps[1]),float(gps[2])
+        # ax = plt.subplot(grid[2,2])
+        # ax.scatter(lat,lon,c="blue")
+        # plt.pause(0.1)
+
+        #Update
+
+        if self.file_num==0:
+            self.img_l_view.camera.set_range()
+            self.img_d_view.camera.set_range()
+            self.scan_view.camera.set_range()
+        self.file_num +=1
+        if self.file_num>= len(self.files):
+            self.seq +=1
+            if self.seq >= len(self.sequences):
+                self.seq = 0
+            self.file_num = 0
+        
+
+    def run(self):
+        self.timer.connect(self.vispy_update)
+        self.timer.start(1.0)
+        vispy.app.run()
 
 
 
 
+def main():
+    viz = Dataset("/home/mkz/git/lidar-bonnetal/train/tasks/semantic/dataset/sequences",seq_num="18")
+    viz.run()
+
+
+if __name__ == "__main__":
+    main()
