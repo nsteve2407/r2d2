@@ -27,12 +27,12 @@ class Dataset():
 
         # laserscan part
         self.scan_view = vispy.scene.widgets.ViewBox(
-            border_color='white', parent=self.canvas.scene)
+            border_color='black', parent=self.canvas.scene)
         self.img_l_view = vispy.scene.widgets.ViewBox(
-            border_color='white', parent=self.canvas.scene)
+            border_color='black', parent=self.canvas.scene)
         self.img_l_view.camera = scene.PanZoomCamera(aspect=1)
         self.img_d_view = vispy.scene.widgets.ViewBox(
-            border_color='white', parent=self.canvas.scene)
+            border_color='black', parent=self.canvas.scene)
         self.img_d_view.camera = scene.PanZoomCamera(aspect=1)
         self.grid.add_widget(self.scan_view, 0,0,col_span=3)
         self.grid.add_widget(self.img_l_view,1,0)
@@ -50,6 +50,8 @@ class Dataset():
         self.file_num = 0
         self.files = os.listdir(os.path.join(self.dataset_path,self.sequences[self.seq],'velodyne'))
         self.files = [s.strip(".bin") for s in self.files]
+        self.files.sort()
+        print("Loaded {} files".format(len(self.files)))
 
             # make semantic colors
         self.cfg = yaml.safe_load(open("/home/mkz/git/r2d2/config/r2d2.yaml",'r'))
@@ -63,13 +65,22 @@ class Dataset():
             self.sem_color_lut[key] = np.array(value, np.float32) / 255.0
 
         self.gps_w = vispy.scene.widgets.ViewBox(
-            border_color='white', parent=self.canvas.scene)
+            border_color='black', parent=self.canvas.scene)
         self.gps_w.camera = scene.PanZoomCamera(aspect=1)
         self.grid.add_widget(self.gps_w,1,2)
         self.gps_plot = visuals.Markers()
         self.gps_w.add(self.gps_plot)
 
         self.gps_logs = None
+        if os.path.isfile(os.path.join(self.dataset_path,self.sequences[self.seq],'gps',"gps.txt")):
+            self.gps_file = open(os.path.join(self.dataset_path,self.sequences[self.seq],'gps',"gps.txt"),'r')
+            self.gps_log = self.gps_file.readlines() 
+        else:
+            self.gps_file = []
+            self.gps_log = []
+
+        self.bbox_labels = []
+
 
 
 
@@ -87,20 +98,25 @@ class Dataset():
         else:
             print("Error file doesn not exist:{}".format(full_file_path))
     
-    def draw_bbox(img,labels):
+    def draw_bbox(self,img,img_d,labels):
         # if os.path.isfile(label_file_name):
             # file = open(label_file_name,'r')
             # labels = file.readlines()
         if len(labels)==0:
-            return img
+            return img,img_d
         for label in labels:
-            l = label.split(" ")
-            xmin,ymin,xmax,ymax = int(l[4]),int(l[5]),int(l[6]),int(l[7])
-            cv2.rectangle(img,(xmin,ymin),(xmax,ymax),(0,0,255),2)
+            l = label.split()
+            print(l)
+            xmin,ymin,xmax,ymax = float(l[-12]),float(l[-11]),float(l[-10]),float(l[-9])
+            print(img.shape)
+            xmin,ymin,xmax,ymax = int(xmin),int(ymin),int(xmax),int(ymax)
+            print(xmin,ymin,xmax,ymax)
+            cv2.rectangle(img,(xmin,ymin),(xmax,ymax),(0,0,255),3)
+            cv2.rectangle(img_d,(xmin,ymin),(xmax,ymax),(0,0,255),3)
 
 
 
-        return img
+        return img,img_d
 
     def open_label(self, filename):
 
@@ -204,12 +220,15 @@ class Dataset():
         
         base_path = os.path.join(self.dataset_path,self.sequences[self.seq])
         
-        gps_file = open(os.path.join(self.dataset_path,self.sequences[self.seq],'gps',"gps.txt"),'r')
-        gps_log = gps_file.readlines() 
+
 
         pc,r = self.open_pointcloud(os.path.join(base_path,"velodyne",self.files[self.file_num]+".bin"))
         self.open_label(os.path.join(base_path,"labels",self.files[self.file_num]+".label"))
         # label
+        if os.path.isfile(os.path.join(base_path,"label_2",self.files[self.file_num]+".txt")):
+            file = open(os.path.join(base_path,"label_2",self.files[self.file_num]+".txt"),'r')
+            self.bbox_labels = file.readlines()
+        
         img_path = os.path.join(base_path,"stereo_l",self.files[self.file_num]+".jpg")
         if os.path.isfile(img_path):
             img_left = cv2.imread(img_path)
@@ -227,53 +246,69 @@ class Dataset():
         else:
             img_d= None
 
-        gps = gps_log[self.file_num]
+        if self.file_num<len(self.gps_log):
+            gps = self.gps_log[self.file_num]
         # # print(gps)
-        gps = gps.split()
-        lat,lon = float(gps[1]),float(gps[2])
+            gps = gps.split()
+            lat,lon = float(gps[1]),float(gps[2])
         # lat,lon,_,_ = utm.from_latlon(lat,lon)
-        if self.gps_logs==None:
-            self.gps_logs = [[lat,lon,0.0]]
-        else:
-            self.gps_logs.append([lat,lon,0.0])
-        print(np.array(self.gps_logs))
-        self.scan_vis.set_data(pc,face_color=self.sem_label_color[...,::-1],edge_color=self.sem_label_color[...,::-1],size=1)
+            if self.gps_logs==None:
+                self.gps_logs = [[lat,lon,0.0]]
+            else:
+                self.gps_logs.append([lat,lon,0.0])
 
-        img_left = cv2.flip(img_left,0)
-        img_d = cv2.flip(img_d,0)
-        self.img_l_v.set_data(cv2.cvtColor(img_left, cv2.COLOR_BGR2RGB))
-        self.img_d_v.set_data(img_d)
+        self.scan_vis.set_data(pc,face_color=self.sem_label_color[...,::-1],edge_color=self.sem_label_color[...,::-1],size=1)
+        
+
+        if os.path.isfile(img_d_path):
+            if True:
+                img_left, img_d = self.draw_bbox(img_left,img_d,self.bbox_labels)
+            img_left = cv2.resize(img_left,(640,540))
+            img_d = cv2.resize(img_d,(640,540))
+            img_left = cv2.flip(img_left,0)
+            img_d = cv2.flip(img_d,0)
+            self.img_l_v.set_data(cv2.cvtColor(img_left, cv2.COLOR_BGR2RGB))
+            self.img_d_v.set_data(img_d)
 
         # # Plot gps coordinates
-        gps_data = np.array(self.gps_logs)
-        self.gps_plot.set_data(gps_data,face_color=(1,0,0),edge_color=(1,0,0),size=2)
-        self.gps_w.camera.set_range((np.min(gps_data[:,0])-0.00001,np.max(gps_data[:,0])+0.00001),(np.min(gps_data[:,1])-0.00001,np.max(gps_data[:,1])+0.00001),(1,-1))
-        #Update
+        if self.file_num<len(self.gps_log):
+            gps_data = np.array(self.gps_logs)
+            self.gps_plot.set_data(gps_data,face_color=(1,0,0),edge_color=(1,0,0),size=2)
+            self.gps_w.camera.set_range((np.min(gps_data[:,0])-0.00001,np.max(gps_data[:,0])+0.00001),(np.min(gps_data[:,1])-0.00001,np.max(gps_data[:,1])+0.00001),(1,-1))
+            #Update
 
         if self.file_num==0:
-            self.img_l_view.camera.set_range()
-            self.img_d_view.camera.set_range()
+            if os.path.isfile(img_d_path):
+                self.img_l_view.camera.set_range()
+                self.img_d_view.camera.set_range()
             self.scan_view.camera.set_range()
             
         self.file_num +=1
+        self.bbox_labels = []
         if self.file_num>= len(self.files):
             self.seq +=1
             if self.seq >= len(self.sequences):
                 self.seq = 0
             self.file_num = 0
             self.gps_logs = None
+            if os.path.isfile(os.path.join(self.dataset_path,self.sequences[self.seq],'gps',"gps.txt")):
+                self.gps_file = open(os.path.join(self.dataset_path,self.sequences[self.seq],'gps',"gps.txt"),'r')
+                self.gps_log = self.gps_file.readlines() 
+            else:
+                self.gps_file = []
+                self.gps_log = []
         
 
     def run(self):
         self.timer.connect(self.vispy_update)
-        self.timer.start(1.0)
+        self.timer.start()
         vispy.app.run()
 
 
 
 
 def main():
-    viz = Dataset("/home/mkz/git/lidar-bonnetal/train/tasks/semantic/dataset/sequences",seq_num="18")
+    viz = Dataset("/home/mkz/git/lidar-bonnetal/train/tasks/semantic/dataset/sequences",seq_num="17")
     viz.run()
 
 
