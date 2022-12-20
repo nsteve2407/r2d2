@@ -1,5 +1,6 @@
 #! /usr/bin/env/python3
 import os
+import yaml
 import numpy as np
 import open3d as o3d
 import matplotlib.pyplot as plt
@@ -49,6 +50,18 @@ class Dataset():
         self.files = os.listdir(os.path.join(self.dataset_path,self.sequences[self.seq],'velodyne'))
         self.files = [s.strip(".bin") for s in self.files]
 
+            # make semantic colors
+        self.cfg = yaml.safe_load(open("/home/mkz/git/r2d2/config/r2d2.yaml",'r'))
+        sem_color_dict = self.cfg["color_map"]
+        max_sem_key = 0
+        for key, data in sem_color_dict.items():
+            if key + 1 > max_sem_key:
+                max_sem_key = key + 1
+        self.sem_color_lut = np.zeros((max_sem_key + 100, 3), dtype=np.float32)
+        for key, value in sem_color_dict.items():
+            self.sem_color_lut[key] = np.array(value, np.float32) / 255.0
+
+
 
 
     def open_pointcloud(self,full_file_path):
@@ -79,6 +92,20 @@ class Dataset():
 
 
         return img
+
+    def open_label(self, filename):
+
+        label = np.fromfile(filename, dtype=np.int32)
+        label = label.reshape((-1))
+
+        # label = label[self.idx_valid]
+
+        # set it
+        self.sem_label = label & 0xFFFF  # semantic label in lower half  
+        self.sem_label_color = self.sem_color_lut[self.sem_label]
+        self.sem_label_color = self.sem_label_color.reshape((-1, 3))     
+
+
 
     def play_sequence(self):
         st = 0.2
@@ -172,6 +199,7 @@ class Dataset():
         gps_log = gps_file.readlines() 
 
         pc,r = self.open_pointcloud(os.path.join(base_path,"velodyne",self.files[self.file_num]+".bin"))
+        self.open_label(os.path.join(base_path,"labels",self.files[self.file_num]+".label"))
         # label
         img_path = os.path.join(base_path,"stereo_l",self.files[self.file_num]+".jpg")
         if os.path.isfile(img_path):
@@ -182,9 +210,11 @@ class Dataset():
         if os.path.isfile(img_d_path):
             img_d = cv2.imread(img_d_path)
             # img_d = img_d*1.8
-            # img_d = np.where(img_d<0.5,img_d*2.0,img_d)
-            # img_d = img_d.astype('uint8')
+            img_d = np.where(img_d<100,img_d*2.5,img_d)
+            img_d = img_d.astype('uint8')
             img_d = self.increase_brightness(img_d,50)
+            
+            
         else:
             img_d= None
 
@@ -200,7 +230,7 @@ class Dataset():
         # pc = pc[r>0.1]
         # ax = plt.subplot(grid[:2,:])
         # ax.scatter(pc[:,0],pc[:,1],s=0.5)
-        self.scan_vis.set_data(pc,face_color=( 1,0,0),edge_color=(1,0,0),size=1)
+        self.scan_vis.set_data(pc,face_color=self.sem_label_color[...,::-1],edge_color=self.sem_label_color[...,::-1],size=1)
         # self.scan_vis.update()
         # self.canvas.render()
 
@@ -211,6 +241,7 @@ class Dataset():
         # ax.imshow(cv2.cvtColor(img_d, cv2.COLOR_BGR2RGB))
         # img_left = cv2.resize(img_left, (960,540), interpolation = cv2.INTER_AREA)
         img_left = cv2.flip(img_left,0)
+        img_d = cv2.flip(img_d,0)
         # img_d = cv2.resize(img_d, (960,540), interpolation = cv2.INTER_AREA)
         # img_d = cv2.cvtColor(img_d, cv2.COLOR_BGR2GRAY)
         self.img_l_v.set_data(cv2.cvtColor(img_left, cv2.COLOR_BGR2RGB))
